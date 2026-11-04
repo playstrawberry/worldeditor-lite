@@ -1,0 +1,23 @@
+[package]
+name = "worldeditor-lite"
+version = "0.1.0"
+edition = "2024"
+description = "Strawberry first-party plugin: selections, region edits, clipboard, history, schematics and brushes, in bounded batches over ticks."
+authors = ["Strawberry Interactive LLC"]
+license = "LicenseRef-All-Rights-Reserved"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+# Plugin chunk tickets (`world.add-plugin-chunk-ticket`, `is-chunk-loaded`). Not in the SDK yet;
+# turn on when the SDK has them. Only `src/chunks.rs` changes.
+chunk-tickets = []
+
+[dependencies]
+strawberry-plugin-api = { path = "../strawberry-plugin-api" }
+block-edit = { path = "../block-edit" }
+
+# A repository of its own, not a member of a larger workspace.
+[workspace]
