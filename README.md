@@ -88,7 +88,7 @@ English, French, Spanish and Turkish, chosen by each player's game language (`la
 3. Give the command permissions to your builders.
 
 Play Strawberry servers load only plugins signed by Play Strawberry, so a file you build yourself
-from this source does not load on them.
+from this source loads only on your own Play Strawberry developer server.
 
 ## Build from source
 
@@ -96,6 +96,9 @@ You need Rust with the `wasm32-wasip2` target and the Strawberry plugin SDK
 (`strawberry-plugin-api`), which Play Strawberry gives to its plugin developers.
 `Cargo.toml` takes it from the SDK registry named `strawberry`; add that registry to
 your Cargo configuration (for example `~/.cargo/config.toml`):
+
+To get the SDK, accept its licence at https://panel.playstrawberry.net/strawberry/sdk; the page gives you a
+token for `cargo login --registry strawberry`.
 
 ```toml
 [registries.strawberry]
@@ -113,5 +116,8 @@ The plugin file is `target/wasm32-wasip2/release/worldeditor_lite.wasm`.
 
 ## License
 
-Copyright Strawberry Interactive LLC. The license text is not published yet; until it is, all
-rights are reserved.
+Source available under the Strawberry Source-Available License 1.0 ([LICENSE](LICENSE)). In short: you may read, build and
+change this code for your own use, and run what you build only on Play Strawberry, without making money from it unless we
+approve it in writing. The build Play Strawberry offers may be used on any of your Play Strawberry servers, also ones that
+earn money. Selling the code or anything built from it is not allowed. Forks are welcome for sending us changes (pull
+requests and issues).

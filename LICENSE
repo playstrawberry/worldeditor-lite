@@ -1,0 +1,60 @@
+# Strawberry Source-Available License
+
+Version 1.0
+
+Copyright (c) Strawberry Interactive LLC. All rights not granted below are reserved.
+
+## 1. What you may do
+
+You may:
+
+- read and study this source code;
+- build it, and change it for your own use;
+- run what you build, changed or not, only on servers hosted on Play Strawberry, and only for non-commercial use,
+  unless Strawberry Interactive LLC approves it in writing;
+- use the build that Play Strawberry offers (installed from Play Strawberry, signed by Play Strawberry) on your
+  servers on Play Strawberry, also on servers that earn money;
+- fork this repository on GitHub, only to send us changes (pull requests, issues);
+- share links to this repository.
+
+## 2. What you may not do
+
+You may not:
+
+- copy, publish, share or distribute this code, or anything built from it, outside Play Strawberry,
+  changed or not, in whole or in part (a GitHub fork made only to send us changes, as in section 1,
+  is allowed);
+- sell, rent or license it, or anything built from it, changed or not, or charge for it in any
+  way, anywhere, on Play Strawberry included;
+- use what you build from this source, changed or not, on a server that earns money, without
+  Strawberry Interactive LLC's written approval (the build Play Strawberry offers may be used there);
+- run it, or anything built from it, on any server or server software that is not Play Strawberry;
+- port it, or make it work, on any other server software;
+- remove or change this license or the copyright notice.
+
+## 3. Contributions
+
+If you send us a change (a pull request, a patch, an issue with code), you allow Strawberry
+Interactive LLC to use, change and distribute it under any terms, and you confirm it is yours to
+give.
+
+## 4. Names
+
+This license gives no right to use the names Strawberry, Play Strawberry or Strawberry Interactive,
+or their logos.
+
+## 5. No warranty
+
+The code is provided "as is", without any warranty, express or implied, including fitness for a
+purpose and non-infringement. Strawberry Interactive LLC is not liable for any damage or loss that
+comes from using it, to the extent the law allows.
+
+## 6. End
+
+If you break this license, your rights under it end at once. Rights you received from us again in
+writing are not affected.
+
+## 7. Changes
+
+Strawberry Interactive LLC may publish a new version of this license. Code published under this
+version stays under it unless you choose the new one.
