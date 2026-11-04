@@ -16,8 +16,9 @@ crate-type = ["cdylib"]
 chunk-tickets = []
 
 [dependencies]
-strawberry-plugin-api = { path = "../strawberry-plugin-api" }
-block-edit = { path = "../block-edit" }
+strawberry-plugin-api = { version = "=0.2.1", registry = "strawberry" }
+block-edit = { path = "libs/block-edit" }
 
 # A repository of its own, not a member of a larger workspace.
 [workspace]
+members = ["libs/block-edit"]

@@ -1,0 +1,10 @@
+[package]
+name = "block-edit"
+version = "0.1.0"
+edition = "2024"
+description = "Strawberry library: block regions, patterns, rotate and flip, undo history, bounded edit jobs, NBT, gzip and .schem schematics. No SDK calls, no world or player needed."
+authors = ["Strawberry Interactive LLC"]
+license = "LicenseRef-All-Rights-Reserved"
+publish = false
+
+[dependencies]
