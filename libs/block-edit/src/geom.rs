@@ -282,6 +282,13 @@ impl Cursor {
         out
     }
 
+    /// The box of the next position (its index among the cut boxes, and the box), if any is left.
+    #[must_use]
+    pub fn current_box(&self) -> Option<(usize, Cuboid)> {
+        self.next?;
+        self.boxes.get(self.index).map(|b| (self.index, *b))
+    }
+
     #[must_use]
     pub fn is_done(&self) -> bool {
         self.next.is_none()

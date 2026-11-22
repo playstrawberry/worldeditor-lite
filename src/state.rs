@@ -10,7 +10,7 @@ use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
 use strawberry_plugin_api::text::TextComponent;
-use strawberry_plugin_api::{Player, Server, scheduler};
+use strawberry_plugin_api::{BlockWrite, Player, Server, scheduler};
 
 use crate::chunks::{self, Tickets};
 use crate::clipboard::Clipboard;
@@ -111,6 +111,8 @@ pub struct State {
     pub tick: u64,
     pub air: Vec<u16>,
     pub entity_states: HashMap<u16, bool>,
+    /// The write list of the batch calls, kept with its room while edits run (see `tick`).
+    pub batch: Vec<BlockWrite>,
     /// Online players who may use the wand or a brush, by raw UUID: filled at join from their
     /// permissions and whenever they run one of this plugin's commands. The click handlers stop
     /// at this set for everyone else, after one host call.
@@ -163,6 +165,7 @@ static STATE: LazyLock<Mutex<State>> = LazyLock::new(|| {
         tick: 0,
         air: Vec::new(),
         entity_states: HashMap::new(),
+        batch: Vec::new(),
         active: HashSet::new(),
         current: None,
     })
@@ -250,6 +253,8 @@ enum End {
     Cancelled,
     Chunk((i32, i32)),
     WorldGone,
+    /// The server refused a write batch (its answer); nothing of that batch was written.
+    Refused(String),
 }
 
 fn seconds(since: Instant) -> String {
@@ -258,13 +263,14 @@ fn seconds(since: Instant) -> String {
 
 /// One game tick of every running edit.
 fn tick(server: &Server) {
-    let (jobs, config, mut entity_states, now) = {
+    let (jobs, config, mut entity_states, mut batch, now) = {
         let mut s = state();
         s.tick += 1;
         (
             std::mem::take(&mut s.jobs),
             s.config.clone(),
             std::mem::take(&mut s.entity_states),
+            std::mem::take(&mut s.batch),
             s.tick,
         )
     };
@@ -296,11 +302,14 @@ fn tick(server: &Server) {
         }
         r.tickets.want(&world, &r.job.chunks_ahead(chunks::AHEAD));
         let dimension = world.get_dimension();
+        // Every step sends what it queued; nothing of one edit may reach another's world.
+        batch.clear();
         let mut access = HostWorld {
             server,
             world: &world,
             dimension: &dimension,
             flags,
+            batch: &mut batch,
             entity_states: &mut entity_states,
             start: Instant::now(),
         };
@@ -331,6 +340,10 @@ fn tick(server: &Server) {
                 }
                 keep.push(r);
             }
+            Step::Refused(reason) => {
+                r.tickets.release_all(&world);
+                finished.push((r, End::Refused(reason)));
+            }
             Step::Blocked(c) => {
                 let since = *r.blocked_since.get_or_insert_with(Instant::now);
                 if since.elapsed().as_secs() >= config.chunk_wait_seconds {
@@ -353,10 +366,18 @@ fn tick(server: &Server) {
     if config.edit_log {
         for (r, end) in &finished {
             let outcome = match end {
-                End::Done => "done",
-                End::Cancelled => "cancelled",
-                End::Chunk(_) => "stopped at an unloaded chunk",
-                End::WorldGone => "stopped, the world was unloaded",
+                End::Done => "done".to_owned(),
+                End::Cancelled => "cancelled".to_owned(),
+                End::Chunk(_) => "stopped at an unloaded chunk".to_owned(),
+                End::WorldGone => "stopped, the world was unloaded".to_owned(),
+                End::Refused(reason) => {
+                    let reason: String = reason
+                        .chars()
+                        .filter(|c| !c.is_control())
+                        .take(120)
+                        .collect();
+                    format!("stopped, the server refused a block batch ({reason})")
+                }
             };
             let line = edit_log_line(
                 &r.actor,
@@ -364,7 +385,7 @@ fn tick(server: &Server) {
                 &r.job.world,
                 r.area,
                 r.job.changed,
-                outcome,
+                &outcome,
                 r.started.elapsed().as_secs_f64(),
             );
             strawberry_plugin_api::logging::log(
@@ -379,6 +400,11 @@ fn tick(server: &Server) {
         s.entity_states = entity_states;
         keep.append(&mut s.jobs);
         s.jobs = keep;
+        // The write list keeps its room for the next tick while edits run (a batch never holds
+        // more than `job::MAX_BATCH`), and is let go with the last one.
+        if !s.jobs.is_empty() {
+            s.batch = batch;
+        }
         for (r, end) in finished {
             messages.extend(finish(&mut s, r, &end));
         }
@@ -434,7 +460,8 @@ fn finish(s: &mut State, r: Running, end: &End) -> Vec<Message> {
             Kind::Undo => (owner.clone(), "done_undo", vec![changed]),
             Kind::Redo => (owner.clone(), "done_redo", vec![changed]),
         },
-        End::Cancelled => (owner.clone(), "cancelled", vec![changed]),
+        // A refused batch ends the edit like a stop: what was written is in the record.
+        End::Cancelled | End::Refused(_) => (owner.clone(), "cancelled", vec![changed]),
         End::Chunk((x, z)) => (
             owner.clone(),
             "stopped_chunk",
@@ -485,6 +512,7 @@ mod tests {
             tick: 0,
             air: Vec::new(),
             entity_states: HashMap::new(),
+            batch: Vec::new(),
             active: HashSet::new(),
             current: None,
         }

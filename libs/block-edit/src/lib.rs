@@ -1,5 +1,5 @@
 //! block-edit: the pure part of block editing, shared by every Strawberry plugin that edits or
-//! reads blocks in bulk.
+//! reads blocks in bulk (worldeditor-lite first; a game plugin's schematic reader next).
 //!
 //! Nothing here calls the server. The server's block registry comes in through
 //! [`pattern::Blocks`], the world through [`job::WorldAccess`], so a plugin keeps its host calls in
@@ -11,7 +11,7 @@
 //! - [`transform`]: quarter turns and flips of positions and block states.
 //! - [`clipboard`], [`history`]: copied boxes; undo and redo with memory and step limits.
 //! - [`job`]: edits as jobs that run in bounded steps and never touch an unloaded chunk.
-//! - [`nbt`], [`gzip`], [`schematic`]: bounded readers and writers; `.schem` schematics v1 to v3
+//! - [`nbt`], [`gzip`], [`schematic`]: bounded readers and writers; Sponge schematics v1 to v3
 //!   read (low level: [`schematic::decode`]), v3 written. Every limit is an argument.
 
 pub mod clipboard;

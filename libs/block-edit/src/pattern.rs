@@ -179,6 +179,15 @@ impl Pattern {
         }
     }
 
+    /// The state of a pattern of one block, which places the same state everywhere.
+    #[must_use]
+    pub fn only(&self) -> Option<u16> {
+        match self.entries.as_slice() {
+            [(_, state)] => Some(*state),
+            _ => None,
+        }
+    }
+
     pub fn parse(text: &str, blocks: &dyn Blocks) -> Result<Self, PatternError> {
         let text = check_size(text)?;
         let parts = split_top(text)?;

@@ -1,5 +1,6 @@
 //! The commands. Each has its own permission, `worldeditor-lite:<name>`, given to operators
-//! (level 2) by default. The region commands start with a second slash (`//set`).
+//! (level 2) by default. The command names follow the well-known editor convention: the
+//! region commands start with a second slash (`//set`).
 //!
 //! A command only checks its input and queues an edit; the edit itself runs in bounded steps
 //! over the next ticks (`state`). File work for schematics runs in async tasks.
@@ -75,7 +76,7 @@ impl CommandHandler for Cmd {
                 &[],
             ))));
         }
-        // The server let the command through, so the player holds this plugin's permission:
+        // The engine let the command through, so the player holds this plugin's permission:
         // from now on the click handlers look at their clicks.
         let log = state().config.edit_log;
         let actor = log.then(|| player.get_name());

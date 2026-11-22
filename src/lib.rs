@@ -1,9 +1,11 @@
 //! worldeditor-lite (first-party): selections with a wand or by position, region edits, a
-//! clipboard with rotate and flip, undo and redo, `.schem` schematics, brushes and biome edits.
+//! clipboard with rotate and flip, undo and redo, Sponge schematics, brushes and biome edits.
 //!
 //! Every edit runs in bounded steps over game ticks (`state`), a few milliseconds per tick for
 //! all edits together, so a large edit never holds the tick. Nothing is read from or written to
-//! a chunk that is not loaded (`chunks`).
+//! a chunk that is not loaded (`chunks`). Written from public documentation of the well-known
+//! editor's commands and behaviour, and the public Sponge schematic specification; no code of
+//! any other editor was read or copied.
 
 pub mod biome;
 pub mod chunks;

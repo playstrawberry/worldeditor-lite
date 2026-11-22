@@ -530,12 +530,12 @@ mod tests {
         assert_eq!(gunzip(&gzip(&[]), 10), Ok(vec![]));
     }
 
-    /// `testdata/dynamic_gz.rs` holds the bytes Python's `gzip.compress(text, 9)` wrote, which
-    /// chose a dynamic Huffman block (type 2) for this text.
+    /// `testdata/dynamic.gz` was written by Python's `gzip.compress(text, 9)`, which chose a
+    /// dynamic Huffman block (type 2) for this text.
     #[test]
     fn reads_a_dynamic_block_and_a_stored_block() {
         let text = include_bytes!("../testdata/dynamic.txt");
-        let packed: &[u8] = &include!("../testdata/dynamic_gz.rs");
+        let packed = include_bytes!("../testdata/dynamic.gz");
         assert_eq!(
             (packed[10] >> 1) & 3,
             2,

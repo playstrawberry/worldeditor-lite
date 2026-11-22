@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use strawberry_plugin_api::common::BlockPos;
 use strawberry_plugin_api::world::{self, BlockFlags};
-use strawberry_plugin_api::{Block, BlockState, Server, World};
+use strawberry_plugin_api::{Block, BlockState, BlockWrite, Server, World};
 
 use crate::chunks;
 use crate::geom::Pos;
@@ -55,7 +55,7 @@ fn states_of(name: &str) -> Option<StateList> {
 
 impl Blocks for HostBlocks {
     /// Picked from the block's own state list. `world.resolve-block-state` is never given
-    /// properties, so a property the block lacks never reaches the server.
+    /// properties typed by a player: a value the block lacks is not safe to pass there.
     fn resolve(&self, name: &str, props: &[(String, String)]) -> Option<u16> {
         let block = Block::from_name(name)?;
         if props.is_empty() {
@@ -93,6 +93,9 @@ pub struct HostWorld<'a> {
     pub world: &'a World,
     pub dimension: &'a str,
     pub flags: BlockFlags,
+    /// The writes queued for the next batch call: the one list the call takes, emptied (and its
+    /// room kept) by every call.
+    pub batch: &'a mut Vec<BlockWrite>,
     /// Whether a state has block entity data, kept across edits.
     pub entity_states: &'a mut HashMap<u16, bool>,
     pub start: Instant,
@@ -121,8 +124,23 @@ impl WorldAccess for HostWorld<'_> {
         self.world.get_block_state_id(wit(p))
     }
 
-    fn set(&mut self, p: Pos, state: u16) {
-        self.world.set_block_state(wit(p), state, self.flags);
+    fn queue(&mut self, p: Pos, state: u16) {
+        self.batch.push(BlockWrite { pos: wit(p), state });
+    }
+
+    /// One `set-block-states` call, with the same flags the single writes had.
+    fn flush(&mut self) -> Result<u32, String> {
+        let result = self
+            .world
+            .set_block_states(self.batch.as_slice(), self.flags);
+        self.batch.clear();
+        result
+    }
+
+    /// One `fill-cuboid` call, with the same flags the single writes had.
+    fn fill(&mut self, min: Pos, max: Pos, state: u16) -> Result<u32, String> {
+        self.world
+            .fill_cuboid(wit(min), wit(max), state, self.flags)
     }
 
     fn has_entity(&mut self, state: u16) -> bool {

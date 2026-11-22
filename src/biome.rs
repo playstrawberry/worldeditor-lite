@@ -1,9 +1,10 @@
 //! Biomes: the contract's biome list with registry names, and the one place that sets biomes.
 //!
-//! The SDK has no call yet that sets a biome in a live world (`set-biome` and `fill-biome`
-//! exist only on the generator's chunk buffer), so a biome edit runs the server's own
-//! `/fillbiome` from the console, through `execute in <dimension>`, piece by piece. The
-//! command text holds only numbers and a name from the table below.
+//! The SDK at `SDK_REV` has no call that sets a biome in a live world (`set-biome` and
+//! `fill-biome` exist only on the generator's chunk buffer), so a biome edit runs the server's
+//! own `/fillbiome` from the console, through `execute in <dimension>`, piece by piece. The
+//! command text holds only numbers and a name from the table below. A world-level `set-biome`
+//! and `fill-biome` (Paper `World#setBiome`) would replace this.
 
 use strawberry_plugin_api::server::CommandSender as ExecSender;
 use strawberry_plugin_api::wit::strawberry::plugin::biomes::Biome;

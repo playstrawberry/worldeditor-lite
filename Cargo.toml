@@ -10,13 +10,8 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
-[features]
-# Plugin chunk tickets (`world.add-plugin-chunk-ticket`, `is-chunk-loaded`). Not in the SDK yet;
-# turn on when the SDK has them. Only `src/chunks.rs` changes.
-chunk-tickets = []
-
 [dependencies]
-strawberry-plugin-api = { version = "=0.2.1", registry = "strawberry" }
+strawberry-plugin-api = { version = "=0.2.2", registry = "strawberry" }
 block-edit = { path = "libs/block-edit" }
 
 # A repository of its own, not a member of a larger workspace.

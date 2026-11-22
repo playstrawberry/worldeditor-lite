@@ -1,5 +1,5 @@
-//! Schematic files (`.schem`): versions 1, 2 and 3 are read, version 3 is written. The file is
-//! gzip-compressed NBT.
+//! Schematic files in the Sponge format (`.schem`): versions 1, 2 and 3 are read, version 3 is
+//! written. The file is gzip-compressed NBT.
 //!
 //! Version 3 (public specification of the format): `Schematic { Version, DataVersion, Width,
 //! Height, Length, Offset, Metadata, Blocks { Palette, Data, BlockEntities } }` inside an unnamed
@@ -269,7 +269,7 @@ pub struct Loaded {
 
 /// Reads a schematic into a clipboard of this server's block states. Palette entries the server
 /// does not know become `air`, counted in [`Loaded::unknown_count`]. Block ids are not upgraded
-/// from older data versions (that table belongs to the server; see the README).
+/// from older data versions (that table belongs to the engine; see the README).
 pub fn read(
     file: &[u8],
     limits: Limits,

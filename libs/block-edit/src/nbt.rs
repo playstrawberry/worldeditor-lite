@@ -244,7 +244,7 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// NBT's "modified UTF-8": UTF-8, except that U+0000 is two bytes and characters above U+FFFF
+/// Java's "modified UTF-8": UTF-8, except that U+0000 is two bytes and characters above U+FFFF
 /// are surrogate pairs of three bytes each. Plain UTF-8 text reads as itself.
 fn decode_modified_utf8(bytes: &[u8]) -> Option<String> {
     if let Ok(text) = std::str::from_utf8(bytes) {
