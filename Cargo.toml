@@ -11,7 +11,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-strawberry-plugin-api = { version = "=0.2.2", registry = "strawberry" }
+strawberry-plugin-api = { version = "=0.2.3", registry = "strawberry" }
 block-edit = { path = "libs/block-edit" }
 
 # A repository of its own, not a member of a larger workspace.
