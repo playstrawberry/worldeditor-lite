@@ -5,8 +5,9 @@
 //! a chunk that is not loaded: nothing is ever read from or written to an unloaded chunk (the
 //! server would answer air and drop the write).
 //!
-//! Writes go to the server in batches, never block by block: a step reads each block (for the
-//! undo record), queues what changes, and sends it in one call of at most [`MAX_BATCH`] blocks.
+//! Writes go to the server in batches, never block by block: a step reads the blocks it visits
+//! (for the undo record) a piece at a time, one call per piece ([`WorldAccess::get_box`]), queues
+//! what changes, and sends it in one call of at most [`MAX_BATCH`] blocks.
 //! A fill of one state with no mask sends boxes instead ([`WorldAccess::fill`]). A batch the
 //! server refuses wrote nothing: its changes leave the record, so undo stays exact, and the job
 //! ends with [`Step::Refused`].
@@ -24,6 +25,10 @@ use crate::transform::transform_state;
 pub trait WorldAccess {
     fn loaded(&mut self, chunk: (i32, i32)) -> bool;
     fn get(&mut self, p: Pos) -> u16;
+    /// The states of every block from `min` to `max` (included) in one call: x fastest, then z,
+    /// then y from the lowest row. At most [`MAX_BATCH`] blocks. `Err`: refused (a chunk of the
+    /// box is not loaded); nothing is read.
+    fn get_box(&mut self, min: Pos, max: Pos) -> Result<Vec<u16>, String>;
     /// Queues one block write for the next [`Self::flush`]; nothing is written yet.
     fn queue(&mut self, p: Pos, state: u16);
     /// Writes the queued blocks in one call, in queue order, each exactly as one single write,
@@ -137,6 +142,110 @@ impl Marks {
     }
 }
 
+/// The states of the next rows of one cut box, read in one call for the positions a step visits
+/// next. Dropped whenever the step sends writes and at the end of every step: a block is never
+/// taken from a read older than a write sent before it, so every block reads exactly what a read
+/// of its own would have read at that point.
+#[derive(Debug, Clone)]
+struct Read {
+    min: Pos,
+    max: Pos,
+    /// `None`: the server refused the read; these positions are read one by one.
+    states: Option<Vec<u16>>,
+}
+
+impl Read {
+    /// The rows of `bounds` from `p`'s row up, as many as hold `want` more blocks from `p` on,
+    /// in one call of at most [`MAX_BATCH`] blocks.
+    fn piece(world: &mut dyn WorldAccess, bounds: Cuboid, p: Pos, want: u64) -> Self {
+        let (sx, _, sz) = bounds.size();
+        let area = sx * sz;
+        // A cut box is at most one chunk wide, so at least 128 rows fit in one call.
+        let most = MAX_BATCH as u64 / area.max(1);
+        if most == 0 {
+            return Self {
+                min: p,
+                max: p,
+                states: None,
+            };
+        }
+        let offset = (p.z - bounds.min.z) as u64 * sx + (p.x - bounds.min.x) as u64;
+        let rows = offset.saturating_add(want).div_ceil(area).clamp(1, most);
+        let top = (i64::from(p.y) + rows as i64 - 1).min(i64::from(bounds.max.y)) as i32;
+        let min = Pos::new(bounds.min.x, p.y, bounds.min.z);
+        let max = Pos::new(bounds.max.x, top, bounds.max.z);
+        let volume = Cuboid { min, max }.volume();
+        let states = world
+            .get_box(min, max)
+            .ok()
+            .filter(|s| s.len() as u64 == volume);
+        Self { min, max, states }
+    }
+
+    const fn contains(&self, p: Pos) -> bool {
+        Cuboid {
+            min: self.min,
+            max: self.max,
+        }
+        .contains(p)
+    }
+
+    /// The state read for `p`; `None` when the read was refused.
+    fn at(&self, p: Pos) -> Option<u16> {
+        let states = self.states.as_ref()?;
+        let sx = (self.max.x - self.min.x + 1) as usize;
+        let sz = (self.max.z - self.min.z + 1) as usize;
+        let i = ((p.y - self.min.y) as usize * sz + (p.z - self.min.z) as usize) * sx
+            + (p.x - self.min.x) as usize;
+        states.get(i).copied()
+    }
+}
+
+/// What is left of a step's budget when a position is visited, to size the next read.
+#[derive(Debug, Clone, Copy)]
+struct Left {
+    /// Blocks the step may still visit, this one included.
+    blocks: u64,
+    start: u64,
+    micros: u64,
+    pending: u64,
+    write_ns: u64,
+}
+
+impl Left {
+    /// The blocks the step is likely to visit still: within its block budget and the time left
+    /// for their writes.
+    fn want(self, world: &mut dyn WorldAccess) -> u64 {
+        let write_ns = self.write_ns.max(1);
+        let spent = world
+            .now_us()
+            .saturating_sub(self.start)
+            .saturating_add(self.pending.saturating_mul(write_ns) / 1000);
+        let by_time = self.micros.saturating_sub(spent).saturating_mul(1000) / write_ns;
+        self.blocks.min(by_time).max(1)
+    }
+}
+
+/// The state at `p` now, from the piece read for it; outside it, the next piece is read first.
+fn old_state(
+    read: &mut Option<Read>,
+    world: &mut dyn WorldAccess,
+    bounds: Cuboid,
+    p: Pos,
+    left: Left,
+) -> u16 {
+    if let Some(r) = read.as_ref()
+        && r.contains(p)
+    {
+        return r.at(p).unwrap_or_else(|| world.get(p));
+    }
+    let want = left.want(world);
+    let r = Read::piece(world, bounds, p, want);
+    let state = r.at(p);
+    *read = Some(r);
+    state.unwrap_or_else(|| world.get(p))
+}
+
 /// Positions of a fill of one state that are read and not written yet: `first` to `last` in
 /// cursor order, all inside one cut box.
 #[derive(Debug, Clone, Copy)]
@@ -172,6 +281,8 @@ pub struct Job {
     /// For a fill of one state everywhere: that state (decided at the first step).
     uniform: Option<Option<u16>>,
     run: Option<Run>,
+    /// The piece of states read last (see [`Read`]).
+    read: Option<Read>,
 }
 
 impl Job {
@@ -200,6 +311,7 @@ impl Job {
             write_ns: FIRST_WRITE_NS,
             uniform: None,
             run: None,
+            read: None,
         }
     }
 
@@ -314,6 +426,8 @@ impl Job {
         let start = world.now_us();
         let mut count: u64 = 0;
         let mut checked: Option<(i32, i32)> = None;
+        // Nothing read in an earlier step is used: the world may have changed since.
+        self.read = None;
         loop {
             let Some(chunk) = self.cursor.chunk() else {
                 return Step::Done;
@@ -344,12 +458,19 @@ impl Job {
             };
             self.done += 1;
             count += 1;
+            let left = Left {
+                blocks: budget.blocks.saturating_sub(count).saturating_add(1),
+                start,
+                micros: budget.micros,
+                pending: self.pending as u64,
+                write_ns: self.write_ns,
+            };
             if let Some(state) = uniform {
-                if let Err(e) = self.visit_uniform(world, box_index, bounds, p, state) {
+                if let Err(e) = self.visit_uniform(world, box_index, bounds, p, state, left) {
                     return Step::Refused(e);
                 }
             } else {
-                self.visit(world, blocks, p);
+                self.visit(world, blocks, bounds, p, left);
             }
         }
     }
@@ -362,11 +483,12 @@ impl Job {
         bounds: Cuboid,
         p: Pos,
         state: u16,
+        left: Left,
     ) -> Result<(), String> {
         if self.run.is_some_and(|r| r.box_index != box_index) {
             self.flush(world)?;
         }
-        let old = world.get(p);
+        let old = old_state(&mut self.read, world, bounds, p, left);
         let changes = old != state;
         if changes {
             if self.entity_data
@@ -400,6 +522,8 @@ impl Job {
     /// writes as one batch, then the block entity data of a paste. A refused call takes its
     /// changes back out of the record (it wrote nothing) and ends the job.
     fn flush(&mut self, world: &mut dyn WorldAccess) -> Result<(), String> {
+        // What is read after this reads the world with these writes in it.
+        self.read = None;
         let n = std::mem::take(&mut self.pending);
         let run = self.run.take();
         if n == 0 || run.is_some_and(|r| !r.changes) {
@@ -451,7 +575,14 @@ impl Job {
         self.marks = to;
     }
 
-    fn visit(&mut self, world: &mut dyn WorldAccess, blocks: &dyn Blocks, p: Pos) {
+    fn visit(
+        &mut self,
+        world: &mut dyn WorldAccess,
+        blocks: &dyn Blocks,
+        bounds: Cuboid,
+        p: Pos,
+        left: Left,
+    ) {
         let entity_data = self.entity_data;
         match &mut self.work {
             Work::Fill {
@@ -464,7 +595,7 @@ impl Job {
                     return;
                 }
                 let new = pattern.pick(p.x, p.y, p.z, *seed);
-                let old = world.get(p);
+                let old = old_state(&mut self.read, world, bounds, p, left);
                 if old == new || mask.as_ref().is_some_and(|m| !m.matches(old)) {
                     return;
                 }
@@ -490,7 +621,7 @@ impl Job {
                 } else {
                     None
                 };
-                let old = world.get(p);
+                let old = old_state(&mut self.read, world, bounds, p, left);
                 if old == new && entity.is_none() {
                     return;
                 }
@@ -505,7 +636,7 @@ impl Job {
                 min,
                 leave,
             } => {
-                let state = world.get(p);
+                let state = old_state(&mut self.read, world, bounds, p, left);
                 let (x, y, z) = (
                     (p.x - min.x) as u32,
                     (p.y - min.y) as u32,
@@ -942,7 +1073,8 @@ pub fn biome_pieces(cells: crate::geom::Cuboid, max_cells: u64) -> Vec<crate::ge
 pub mod fake {
     use super::*;
 
-    /// A world of one map, every chunk loaded unless listed, a clock that moves 1 µs per read.
+    /// A world of one map, every chunk loaded unless listed, a clock that moves 1 µs per read
+    /// call (one block, or one box) and per block written.
     #[derive(Default)]
     pub struct FakeWorld {
         pub blocks: HashMap<Pos, u16>,
@@ -963,6 +1095,13 @@ pub mod fake {
         pub calls: u64,
         /// The write call (1 = the first) the server refuses, writing nothing.
         pub refuse_call: Option<u64>,
+        /// Read calls: one block at a time, and boxes.
+        pub reads: u64,
+        pub box_reads: u64,
+        /// Every box read is refused (as by a server without it).
+        pub refuse_box_reads: bool,
+        /// Blocks the next write call the server takes also changes (as a neighbour update may).
+        pub knock_on: Vec<(Pos, u16)>,
     }
 
     impl FakeWorld {
@@ -990,6 +1129,9 @@ pub mod fake {
                 return Err("refused".to_owned());
             }
             self.largest = self.largest.max(blocks);
+            for (p, state) in std::mem::take(&mut self.knock_on) {
+                self.blocks.insert(p, state);
+            }
             Ok(())
         }
     }
@@ -1000,11 +1142,36 @@ pub mod fake {
         }
         fn get(&mut self, p: Pos) -> u16 {
             self.clock += 1;
+            self.reads += 1;
             assert!(
                 !self.unloaded.contains(&p.chunk()),
                 "read from an unloaded chunk"
             );
             self.blocks.get(&p).copied().unwrap_or(0)
+        }
+        fn get_box(&mut self, min: Pos, max: Pos) -> Result<Vec<u16>, String> {
+            self.clock += 1;
+            let c = Cuboid { min, max };
+            if self.refuse_box_reads {
+                return Err("refused".to_owned());
+            }
+            if c.volume() > MAX_BATCH as u64 {
+                return Err(format!("{} blocks is more than {MAX_BATCH}", c.volume()));
+            }
+            if let Some(chunk) = c.chunks().into_iter().find(|ch| self.unloaded.contains(ch)) {
+                return Err(format!("the chunk {}, {} is not loaded", chunk.0, chunk.1));
+            }
+            self.box_reads += 1;
+            // x fastest, then z, then y, as the server answers.
+            let mut out = Vec::new();
+            for y in min.y..=max.y {
+                for z in min.z..=max.z {
+                    for x in min.x..=max.x {
+                        out.push(self.blocks.get(&Pos::new(x, y, z)).copied().unwrap_or(0));
+                    }
+                }
+            }
+            Ok(out)
         }
         fn queue(&mut self, p: Pos, state: u16) {
             self.queued.push((p, state));
@@ -1127,8 +1294,14 @@ mod tests {
             ),
             Step::More
         );
-        // Each block costs two clock ticks here (read and write); the check runs every 64 blocks.
-        assert!(job.done >= 100 && job.done <= 192, "done {}", job.done);
+        // The blocks are read in one call; each block's write is taken to cost 1 µs here, and the
+        // clock is looked at every CLOCK_EVERY blocks.
+        assert!(
+            job.done >= 192 && job.done <= 200 + CLOCK_EVERY,
+            "done {}",
+            job.done
+        );
+        assert_eq!(world.reads, 0, "no block read one at a time");
     }
 
     #[test]
@@ -1478,6 +1651,162 @@ mod tests {
                 seed: 0,
             },
         )
+    }
+
+    /// A world of mixed blocks: stone, dirt and air.
+    fn mixed(c: Cuboid) -> FakeWorld {
+        let mut world = FakeWorld::default();
+        for p in Cursor::new(&[c]) {
+            let s = (p.x * 7 + p.y * 3 + p.z).rem_euclid(3) as u16;
+            if s != 0 {
+                world.blocks.insert(p, s);
+            }
+        }
+        world
+    }
+
+    /// The blocks that are not air.
+    fn solid(world: &FakeWorld) -> HashMap<Pos, u16> {
+        world
+            .blocks
+            .iter()
+            .filter(|(_, s)| **s != 0)
+            .map(|(p, s)| (*p, *s))
+            .collect()
+    }
+
+    /// Runs `job` on a copy of `world` read a piece at a time and on one read block by block
+    /// (the path of a server without the box read), and checks both give the same world and
+    /// the same record; then undoes both and checks the first world came back.
+    fn same_as_block_by_block(world: &FakeWorld, c: Cuboid, mut make: impl FnMut() -> Job) {
+        let budget = Budget {
+            micros: u64::MAX,
+            blocks: 20_000,
+        };
+        let mut pieces = FakeWorld {
+            blocks: world.blocks.clone(),
+            ..FakeWorld::default()
+        };
+        let mut single = FakeWorld {
+            blocks: world.blocks.clone(),
+            refuse_box_reads: true,
+            ..FakeWorld::default()
+        };
+        let mut a = make();
+        let mut b = make();
+        assert_eq!(run(&mut a, &mut pieces, budget).0, Step::Done);
+        assert_eq!(run(&mut b, &mut single, budget).0, Step::Done);
+        assert_eq!(pieces.reads, 0, "no block read one at a time");
+        assert!(pieces.box_reads >= 4, "{} box reads", pieces.box_reads);
+        assert_eq!(single.reads, c.volume(), "the old path reads every block");
+        assert_eq!(solid(&pieces), solid(&single), "the same blocks");
+        assert_eq!(a.record.changes, b.record.changes, "the same undo record");
+        assert_eq!(a.changed, b.changed);
+        let (mut ua, mut ub) = (undo_of(a.record), undo_of(b.record));
+        assert_eq!(run(&mut ua, &mut pieces, budget).0, Step::Done);
+        assert_eq!(run(&mut ub, &mut single, budget).0, Step::Done);
+        assert_eq!(solid(&pieces), solid(world), "undo brings every block back");
+        assert_eq!(solid(&single), solid(world));
+    }
+
+    /// Two chunks of 16 × 160 × 16 = 40,960 blocks each: more than one call holds.
+    fn tall() -> Cuboid {
+        Cuboid::from_corners(Pos::new(0, 0, 0), Pos::new(31, 159, 15))
+    }
+
+    #[test]
+    fn a_set_bigger_than_one_call_gives_the_blocks_of_the_single_reads_and_undo_restores_them() {
+        let c = tall();
+        assert!(c.volume() > MAX_BATCH as u64);
+        let world = mixed(c);
+        same_as_block_by_block(&world, c, || fill(c, 1));
+        let blocks = FakeBlocks::default();
+        same_as_block_by_block(&world, c, || {
+            Job::new(
+                "world",
+                &[c],
+                Work::Fill {
+                    pattern: Pattern::parse("stone,dirt", &blocks).unwrap(),
+                    mask: None,
+                    shape: Shape::All,
+                    seed: 3,
+                },
+            )
+        });
+    }
+
+    #[test]
+    fn a_replace_bigger_than_one_call_gives_the_blocks_of_the_single_reads_and_undo_restores_them()
+    {
+        let c = tall();
+        let world = mixed(c);
+        same_as_block_by_block(&world, c, || replace_air(c, 2));
+    }
+
+    #[test]
+    fn a_paste_bigger_than_one_call_gives_the_blocks_of_the_single_reads_and_undo_restores_them() {
+        let c = tall();
+        let source = mixed(c);
+        // Copy the box, then paste it 32 blocks east over a world of other blocks.
+        let mut copy = Job::new(
+            "world",
+            &[c],
+            Work::Copy {
+                clipboard: Clipboard::new((32, 160, 16), Pos::new(0, 0, 0), c.min).unwrap(),
+                min: c.min,
+                leave: None,
+            },
+        );
+        let mut w = FakeWorld {
+            blocks: source.blocks.clone(),
+            ..FakeWorld::default()
+        };
+        assert_eq!(run(&mut copy, &mut w, BIG).0, Step::Done);
+        assert_eq!(w.reads, 0, "the copy reads in pieces too");
+        let (clipboard, _) = copy.take_clipboard().unwrap();
+        let clipboard = Arc::new(clipboard);
+        let at = Pos::new(32, 0, 0);
+        let target = clipboard.target(at);
+        assert_eq!(
+            target,
+            Cuboid::from_corners(at, Pos::new(63, 159, 15)),
+            "the paste covers the box east of the copy"
+        );
+        let mut world = FakeWorld::default();
+        for p in Cursor::new(&[target]) {
+            world.blocks.insert(p, if p.y % 2 == 0 { 2 } else { 1 });
+        }
+        same_as_block_by_block(&world, target, || {
+            Job::new(
+                "world",
+                &[target],
+                Work::Paste {
+                    clipboard: Arc::clone(&clipboard),
+                    at,
+                    skip_air: false,
+                    air: HashSet::new(),
+                    cache: HashMap::new(),
+                },
+            )
+        });
+    }
+
+    #[test]
+    fn a_read_never_outlives_a_write_sent_before_it() {
+        // Two chunks of 25,600 blocks: the first full batch is sent inside the second chunk's
+        // read. That batch changes a block further on (as a neighbour update may); the edit sees
+        // it as a read of that block alone would, and leaves it alone.
+        let c = Cuboid::from_corners(Pos::new(0, 0, 0), Pos::new(31, 99, 15));
+        let later = Pos::new(16, 29, 0);
+        let mut world = FakeWorld::default();
+        world.knock_on.push((later, 1));
+        let mut job = replace_air(c, 2);
+        assert_eq!(run(&mut job, &mut world, BIG).0, Step::Done);
+        assert_eq!(world.largest, MAX_BATCH as u64, "the first batch was full");
+        assert_eq!(world.blocks[&later], 1, "no longer air: not replaced");
+        assert!(job.record.changes.iter().all(|ch| ch.pos != later));
+        assert_eq!(job.record.changes.len(), 51_199);
+        assert_eq!(world.reads, 0);
     }
 
     #[test]

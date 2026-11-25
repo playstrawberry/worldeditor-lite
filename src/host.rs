@@ -124,6 +124,11 @@ impl WorldAccess for HostWorld<'_> {
         self.world.get_block_state_id(wit(p))
     }
 
+    /// One `get-block-states` call for the box.
+    fn get_box(&mut self, min: Pos, max: Pos) -> Result<Vec<u16>, String> {
+        self.world.get_block_states(wit(min), wit(max))
+    }
+
     fn queue(&mut self, p: Pos, state: u16) {
         self.batch.push(BlockWrite { pos: wit(p), state });
     }

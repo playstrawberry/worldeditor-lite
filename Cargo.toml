@@ -1,6 +1,6 @@
 [package]
 name = "worldeditor-lite"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Strawberry first-party plugin: selections, region edits, clipboard, history, schematics and brushes, in bounded batches over ticks."
 authors = ["Strawberry Interactive LLC"]
